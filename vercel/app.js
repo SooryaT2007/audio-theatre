@@ -76,6 +76,9 @@ function switchTab(tab) {
 tabMobileBtn.addEventListener('click', () => switchTab('mobile'));
 tabHostBtn.addEventListener('click', () => switchTab('host'));
 
+// Detect if running on local Python server (e.g. http://10.x.x.x:8000 or http://192.168.x.x:8000)
+const isLocalServer = window.location.port === '8000' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
 // URL Params & Room Init
 const urlParams = new URLSearchParams(window.location.search);
 const initialRoom = urlParams.get('room') || localStorage.getItem('theatre_room') || generateRoomId();
@@ -86,15 +89,15 @@ function generateRoomId() {
   return `THEATRE-${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
-// Auto-switch to Laptop Host tab on desktop if no ?room is in URL
+// Auto-switch to Laptop Host tab on desktop if on public web and no ?room
 const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-if (!isMobileDevice && !urlParams.has('room') && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+if (!isMobileDevice && !urlParams.has('room') && !isLocalServer) {
   switchTab('host');
 }
 
 // Auto-populate local host input
-if (window.location.hostname && window.location.hostname !== 'localhost') {
-  serverHostInput.value = `${window.location.hostname}:8000`;
+if (window.location.hostname) {
+  serverHostInput.value = `${window.location.hostname}:8765`;
 }
 
 function updateStatus(state, message) {
@@ -156,6 +159,13 @@ function releaseWakeLock() {
 // ============================================================================
 function connectCloudRoom(roomId) {
   initAudioContext();
+
+  // If on local Python server, connect directly via local WebSocket
+  if (isLocalServer) {
+    connectLocalWebSocket(window.location.hostname);
+    return;
+  }
+
   const cleanRoom = (roomId || roomCodeInput.value).trim().toUpperCase();
   localStorage.setItem('theatre_room', cleanRoom);
 
@@ -180,7 +190,6 @@ function connectCloudRoom(roomId) {
   const hostPeerId = `at-room-${cleanRoom.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`;
 
   peer.on('open', (id) => {
-    // Initiate call to host with dummy audio stream
     const dummyStream = createSilentStream();
     const call = peer.call(hostPeerId, dummyStream);
     currentCall = call;
@@ -194,7 +203,6 @@ function connectCloudRoom(roomId) {
       tryLocalFallback(cleanRoom);
     });
 
-    // Timeout: if no stream received in 3.5s, attempt local connection
     setTimeout(() => {
       if (!isPlaying) {
         tryLocalFallback(cleanRoom);
@@ -227,30 +235,28 @@ function onAudioStreamReceived(stream) {
   toggleBtn.classList.add('playing');
   requestWakeLock();
 
-  // 1. Play through native HTML5 Audio element (foolproof on iOS & Android)
   if (remoteAudio) {
     remoteAudio.srcObject = stream;
     remoteAudio.volume = 1.0;
-    remoteAudio.play().catch(e => console.log('Audio play catch:', e));
+    remoteAudio.play().catch(e => console.log('Audio play error:', e));
   }
 
-  // 2. Also pipe into Web Audio API for volume boost (>100%) and visualizer
   try {
     initAudioContext();
     const sourceNode = audioCtx.createMediaStreamSource(stream);
     sourceNode.connect(gainNode);
   } catch (e) {
-    console.warn('Web Audio pipe:', e);
+    console.warn('Web Audio pipe error:', e);
   }
 }
 
 function tryLocalFallback(roomId) {
-  const host = serverHostInput.value.trim() || `${window.location.hostname}:8000`;
-  if (host && host !== ':8000') {
+  const host = serverHostInput.value.trim() || window.location.hostname;
+  if (host) {
     connectLocalWebSocket(host);
   } else {
     updateStatus('disconnected', 'Waiting for Host');
-    statusSubtext.textContent = `No broadcaster found for Room ${roomId}. Start broadcasting on your laptop first!`;
+    statusSubtext.textContent = `No broadcaster found for Room ${roomId}. Make sure laptop is broadcasting.`;
   }
 }
 
@@ -262,8 +268,15 @@ function connectLocalWebSocket(host) {
     return;
   }
 
-  const cleanHost = host.replace(/^https?:\/\//, '').replace(/^wss?:\/\//, '');
-  const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${cleanHost}/ws`;
+  initAudioContext();
+  let cleanHost = (host || window.location.hostname || '127.0.0.1').replace(/^https?:\/\//, '').replace(/^wss?:\/\//, '').trim();
+  let hostname = cleanHost.split(':')[0] || '127.0.0.1';
+  let wsPort = 8765;
+
+  const wsUrl = `ws://${hostname}:${wsPort}`;
+
+  updateStatus('connecting', 'Connecting...');
+  statusSubtext.textContent = `Connecting to laptop audio on port ${wsPort}...`;
 
   try {
     ws = new WebSocket(wsUrl);
@@ -273,7 +286,7 @@ function connectLocalWebSocket(host) {
       isPlaying = true;
       updateStatus('connected', 'Local Live');
       statusSubtext.textContent = 'Streaming movie sound from laptop';
-      cloudStatusVal.textContent = 'Local 🏠';
+      cloudStatusVal.textContent = 'Wi-Fi 🏠';
       btnText.textContent = 'STOP LISTENING';
       btnIcon.textContent = '⏹';
       toggleBtn.classList.add('playing');
@@ -288,9 +301,10 @@ function connectLocalWebSocket(host) {
       }
     };
 
-    ws.onerror = () => {
+    ws.onerror = (err) => {
+      console.warn('WebSocket error:', err);
       updateStatus('disconnected', 'Offline');
-      statusSubtext.textContent = 'Make sure laptop is running: python main.py';
+      statusSubtext.textContent = 'Make sure python main.py is running on your laptop!';
     };
 
     ws.onclose = () => {
@@ -387,7 +401,6 @@ async function startLaptopBroadcaster() {
   const hostPeerId = `at-room-${roomId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`;
 
   try {
-    // Request screen/tab capture with system audio
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
       audio: {
@@ -405,15 +418,13 @@ async function startLaptopBroadcaster() {
 
     hostMediaStream = stream;
 
-    // Create Host PeerJS
     if (hostPeer) hostPeer.destroy();
     hostPeer = new Peer(hostPeerId, {
       debug: 1,
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' }
+          { urls: 'stun:stun1.l.google.com:19302' }
         ]
       }
     });
@@ -428,7 +439,6 @@ async function startLaptopBroadcaster() {
       startScreenAudioBtn.innerHTML = '<span>🟢 Movie Audio Broadcasting Live!</span>';
       startScreenAudioBtn.style.background = 'linear-gradient(135deg, #00ff88 0%, #00aa55 100%)';
 
-      // Generate on-screen QR code
       if (hostQrCodeDiv) {
         hostQrCodeDiv.innerHTML = '';
         if (typeof QRCode !== 'undefined') {
@@ -445,11 +455,9 @@ async function startLaptopBroadcaster() {
     });
 
     hostPeer.on('call', (call) => {
-      // Answer receiver call by sending our laptop movie audio stream
       call.answer(hostMediaStream);
     });
 
-    // Handle when user stops screen sharing
     audioTracks[0].onended = () => {
       if (hostPeer) hostPeer.destroy();
       hostLiveInfo.style.display = 'none';

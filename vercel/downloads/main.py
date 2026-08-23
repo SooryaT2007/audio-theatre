@@ -9,9 +9,9 @@ Usage:
 """
 
 import asyncio
-import http
+import functools
+import http.server
 import json
-import mimetypes
 import os
 import random
 import socket
@@ -23,7 +23,8 @@ import qrcode
 import soundcard as sc
 import websockets
 
-PORT = 8000
+HTTP_PORT = 8000
+WS_PORT = 8765
 SAMPLE_RATE = 48000
 BLOCK_SIZE = 1024
 CHANNELS = 2
@@ -62,7 +63,6 @@ def get_loopback_mic():
 async def ws_handler(websocket):
     client_addr = websocket.remote_address
     print(f"\n[+] 📱 Phone Connected: {client_addr[0]}:{client_addr[1]}")
-    
     with clients_lock:
         connected_clients.add(websocket)
         print(f"[*] Total active mobile speakers: {len(connected_clients)}")
@@ -74,7 +74,6 @@ async def ws_handler(websocket):
         "channels": CHANNELS,
         "block_size": BLOCK_SIZE
     })
-    
     try:
         await websocket.send(init_msg)
         await websocket.wait_closed()
@@ -86,30 +85,13 @@ async def ws_handler(websocket):
             print(f"\n[-] 📱 Phone Disconnected: {client_addr[0]}")
             print(f"[*] Total active mobile speakers: {len(connected_clients)}")
 
-def process_http_request(connection, request):
-    if request.headers.get("Upgrade", "").lower() == "websocket":
-        return None
+def start_http_server():
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=WEB_DIR)
+    class QuietServer(http.server.ThreadingHTTPServer):
+        def handle_error(self, request, client_address): pass
 
-    raw_path = request.path.split('?')[0]
-    if raw_path in ('/', ''):
-        raw_path = '/index.html'
-
-    file_path = os.path.join(WEB_DIR, raw_path.lstrip('/'))
-    
-    if os.path.exists(file_path) and os.path.isfile(file_path):
-        mime_type, _ = mimetypes.guess_type(file_path)
-        with open(file_path, 'rb') as f:
-            content = f.read()
-        return connection.respond(
-            http.HTTPStatus.OK,
-            content,
-            headers=[
-                ("Content-Type", mime_type or "text/plain"),
-                ("Access-Control-Allow-Origin", "*"),
-                ("Cache-Control", "no-cache")
-            ]
-        )
-    return connection.respond(http.HTTPStatus.NOT_FOUND, b"<h1>404 Not Found</h1>")
+    httpd = QuietServer(('0.0.0.0', HTTP_PORT), handler)
+    httpd.serve_forever()
 
 def audio_capture_loop(loop):
     mic, dev_name = get_loopback_mic()
@@ -120,7 +102,6 @@ def audio_capture_loop(loop):
         with mic.recorder(samplerate=SAMPLE_RATE, channels=CHANNELS, blocksize=BLOCK_SIZE) as recorder:
             while True:
                 data = recorder.record(numframes=BLOCK_SIZE)
-                
                 with clients_lock:
                     if not connected_clients:
                         time.sleep(0.01)
@@ -133,13 +114,12 @@ def audio_capture_loop(loop):
                 for client in clients:
                     try:
                         asyncio.run_coroutine_threadsafe(client.send(raw_bytes), loop)
-                    except Exception:
-                        pass
+                    except Exception: pass
     except Exception as e:
         print(f"\n[!] Audio capture notice: {e}")
 
 def print_banner(local_ip):
-    url = f"http://{local_ip}:{PORT}"
+    url = f"http://{local_ip}:{HTTP_PORT}"
     print("=" * 64)
     print("        🎬 AUDIO THEATRE - LAPTOP AUDIO SENDER 🎬        ")
     print("=" * 64)
@@ -163,12 +143,13 @@ def print_banner(local_ip):
 async def main():
     local_ip = get_local_ip()
     print_banner(local_ip)
-
+    threading.Thread(target=start_http_server, daemon=True).start()
     loop = asyncio.get_running_loop()
     threading.Thread(target=audio_capture_loop, args=(loop,), daemon=True).start()
 
-    async with websockets.serve(ws_handler, "0.0.0.0", PORT, process_request=process_http_request):
-        print(f"[*] Server running on port {PORT}. Ready for mobile devices!")
+    async with websockets.serve(ws_handler, "0.0.0.0", WS_PORT):
+        print(f"[*] Web Server on port {HTTP_PORT} | Audio Stream on port {WS_PORT}")
+        print("[*] Ready for mobile devices!")
         await asyncio.Future()
 
 if __name__ == "__main__":

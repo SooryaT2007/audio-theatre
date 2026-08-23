@@ -9,9 +9,9 @@ Usage:
 """
 
 import asyncio
-import http
+import functools
+import http.server
 import json
-import mimetypes
 import os
 import random
 import socket
@@ -23,7 +23,8 @@ import qrcode
 import soundcard as sc
 import websockets
 
-PORT = 8000
+HTTP_PORT = 8000
+WS_PORT = 8765
 SAMPLE_RATE = 48000
 BLOCK_SIZE = 1024  # ~21ms low-latency audio chunk
 CHANNELS = 2
@@ -32,7 +33,7 @@ connected_clients = set()
 clients_lock = threading.Lock()
 ROOM_ID = f"THEATRE-{random.randint(1000, 9999)}"
 
-# Locate the vercel static web folder
+# Locate the vercel web app folder
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..', 'vercel'))
 if not os.path.exists(WEB_DIR):
@@ -63,7 +64,7 @@ def get_loopback_mic():
         return sc.default_microphone(), "Default Microphone"
 
 async def ws_handler(websocket):
-    """Handle incoming WebSocket audio connection from mobile phones."""
+    """Handle incoming WebSocket audio streaming connection from mobile phones."""
     client_addr = websocket.remote_address
     print(f"\n[+] 📱 Phone Connected: {client_addr[0]}:{client_addr[1]}")
     
@@ -90,32 +91,17 @@ async def ws_handler(websocket):
             print(f"\n[-] 📱 Phone Disconnected: {client_addr[0]}")
             print(f"[*] Total active mobile speakers: {len(connected_clients)}")
 
-def process_http_request(connection, request):
-    """Serve the static web receiver files directly over HTTP so phones can load it with zero 404s."""
-    if request.headers.get("Upgrade", "").lower() == "websocket":
-        return None  # Pass through to WebSocket handler
-
-    # Parse requested path
-    raw_path = request.path.split('?')[0]
-    if raw_path in ('/', ''):
-        raw_path = '/index.html'
-
-    file_path = os.path.join(WEB_DIR, raw_path.lstrip('/'))
+def start_http_server():
+    """Run standard Python HTTP file server to serve the mobile web app without errors."""
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=WEB_DIR)
     
-    if os.path.exists(file_path) and os.path.isfile(file_path):
-        mime_type, _ = mimetypes.guess_type(file_path)
-        with open(file_path, 'rb') as f:
-            content = f.read()
-        return connection.respond(
-            http.HTTPStatus.OK,
-            content,
-            headers=[
-                ("Content-Type", mime_type or "text/plain"),
-                ("Access-Control-Allow-Origin", "*"),
-                ("Cache-Control", "no-cache")
-            ]
-        )
-    return connection.respond(http.HTTPStatus.NOT_FOUND, b"<h1>404 Not Found</h1>")
+    # Silent log output for clean console
+    class QuietServer(http.server.ThreadingHTTPServer):
+        def handle_error(self, request, client_address):
+            pass
+
+    httpd = QuietServer(('0.0.0.0', HTTP_PORT), handler)
+    httpd.serve_forever()
 
 def audio_capture_loop(loop):
     """Capture loopback audio from Windows speaker output and stream to phones."""
@@ -147,8 +133,7 @@ def audio_capture_loop(loop):
         print(f"\n[!] Audio capture notice: {e}")
 
 def print_banner(local_ip):
-    """Print ASCII QR Code and direct URL."""
-    url = f"http://{local_ip}:{PORT}"
+    url = f"http://{local_ip}:{HTTP_PORT}"
     print("=" * 64)
     print("        🎬 AUDIO THEATRE - LAPTOP AUDIO SENDER 🎬        ")
     print("=" * 64)
@@ -173,11 +158,19 @@ async def main():
     local_ip = get_local_ip()
     print_banner(local_ip)
 
-    loop = asyncio.get_running_loop()
-    threading.Thread(target=audio_capture_loop, args=(loop,), daemon=True).start()
+    # 1. Start HTTP web server in background thread
+    http_thread = threading.Thread(target=start_http_server, daemon=True)
+    http_thread.start()
 
-    async with websockets.serve(ws_handler, "0.0.0.0", PORT, process_request=process_http_request):
-        print(f"[*] Server running on port {PORT}. Ready for mobile devices!")
+    # 2. Start audio loopback capture thread
+    loop = asyncio.get_running_loop()
+    audio_thread = threading.Thread(target=audio_capture_loop, args=(loop,), daemon=True)
+    audio_thread.start()
+
+    # 3. Start WebSocket audio stream server
+    async with websockets.serve(ws_handler, "0.0.0.0", WS_PORT):
+        print(f"[*] Web Server on port {HTTP_PORT} | Audio Stream on port {WS_PORT}")
+        print("[*] Ready for mobile devices!")
         await asyncio.Future()
 
 if __name__ == "__main__":
