@@ -4,23 +4,26 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#0a0b10">
-  <meta name="description" content="Audio Theatre: Stream laptop movie audio to multiple mobile phones as synchronized surround speakers.">
-  <title>Audio Theatre 🎬 Surround Speaker</title>
+  <meta name="description" content="Audio Theatre: Pure Cloud multi-phone cinema surround sound receiver. Works across any network or 4G/5G.">
+  <title>Audio Theatre 🎬 Cloud Surround Speaker</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <!-- PeerJS for Global WebRTC Cloud P2P Streaming -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
   <div class="glow-bg"></div>
 
   <main class="app-container">
+    <!-- Header -->
     <header class="app-header">
       <div class="logo">
         <span class="logo-icon">🔊</span>
         <div class="logo-text">
           <h1>AUDIO THEATRE</h1>
-          <span class="tagline">MULTI-PHONE MOVIE SURROUND SOUND</span>
+          <span class="tagline">CLOUD CINEMA SURROUND SOUND</span>
         </div>
       </div>
       <div id="statusBadgeWrapper">
@@ -31,16 +34,29 @@
       </div>
     </header>
 
+    <!-- Navigation Switcher -->
     <nav class="nav-tabs">
-      <button class="nav-tab active" id="tabMobileBtn" data-target="tabMobile">
+      <button class="nav-tab active" id="tabMobileBtn">
         <span>📱 Mobile Speaker</span>
       </button>
-      <button class="nav-tab" id="tabHostBtn" data-target="tabHost">
-        <span>💻 Laptop Host (Files)</span>
+      <button class="nav-tab" id="tabHostBtn">
+        <span>💻 Laptop Host</span>
       </button>
     </nav>
 
+    <!-- TAB 1: MOBILE RECEIVER (For Phones anywhere in the world / 4G / 5G / Wi-Fi) -->
     <div id="tabMobile" class="tab-content active">
+      <!-- Room Pill Card -->
+      <div class="room-pill-bar glass-panel">
+        <div class="room-label">
+          <span class="cloud-icon">☁️</span>
+          <span>ROOM:</span>
+        </div>
+        <input type="text" id="roomCodeInput" placeholder="e.g. THEATRE-1234" spellcheck="false" autocomplete="off">
+        <button id="joinRoomBtn" class="btn-join">Join</button>
+      </div>
+
+      <!-- Player Card -->
       <section class="player-card glass-panel">
         <div class="visualizer-wrapper">
           <canvas id="visualizerCanvas"></canvas>
@@ -52,17 +68,17 @@
             <span class="btn-icon" id="btnIcon">▶</span>
             <span id="btnText">TAP TO LISTEN</span>
           </button>
-          <p class="hint-text" id="statusSubtext">Turn this phone into an auxiliary movie speaker</p>
+          <p class="hint-text" id="statusSubtext">Works on any network, mobile data (4G/5G), or Wi-Fi</p>
         </div>
 
         <div class="stats-grid">
           <div class="stat-card">
             <span class="stat-label">LATENCY</span>
-            <span class="stat-val" id="latencyVal">~15 ms</span>
+            <span class="stat-val" id="latencyVal">~20 ms</span>
           </div>
           <div class="stat-card">
-            <span class="stat-label">SAMPLE RATE</span>
-            <span class="stat-val" id="sampleRateVal">48 kHz</span>
+            <span class="stat-label">CLOUD SYNC</span>
+            <span class="stat-val active-text" id="cloudStatusVal">WebRTC ⚡</span>
           </div>
           <div class="stat-card">
             <span class="stat-label">WAKE LOCK</span>
@@ -71,7 +87,9 @@
         </div>
       </section>
 
+      <!-- Controls Section -->
       <section class="controls-section glass-panel">
+        <!-- Volume Boost -->
         <div class="control-group">
           <div class="control-header">
             <label for="volumeSlider">🔊 Volume Boost</label>
@@ -85,15 +103,16 @@
           </div>
         </div>
 
+        <!-- Speaker Channel Selection (Surround Sound Placement) -->
         <div class="control-group">
           <div class="control-header">
-            <label>🎧 Speaker Role / Placement</label>
+            <label>🎧 Surround Speaker Role</label>
             <span class="control-sublabel" id="channelLabel">Stereo (Both)</span>
           </div>
           <div class="channel-selector">
             <button class="channel-btn active" data-channel="stereo" id="chanStereo">
               <span>🎭 Stereo</span>
-              <small>Center / Standard</small>
+              <small>Center / All</small>
             </button>
             <button class="channel-btn" data-channel="left" id="chanLeft">
               <span>👈 Left</span>
@@ -106,9 +125,10 @@
           </div>
         </div>
 
+        <!-- Sync / Latency Adjustment -->
         <div class="control-group">
           <div class="control-header">
-            <label for="syncSlider">⏱️ Video Audio Sync (Offset)</label>
+            <label for="syncSlider">⏱️ Video-Audio Sync (Offset)</label>
             <span class="control-value" id="syncVal">0 ms</span>
           </div>
           <input type="range" id="syncSlider" min="-200" max="200" value="0" step="10" class="custom-slider">
@@ -120,65 +140,68 @@
         </div>
       </section>
 
+      <!-- Advanced / Direct IP Settings (Optional) -->
       <details class="config-details glass-panel" id="configDetails">
         <summary class="config-summary">
-          <span>⚙️ Laptop Connection Settings</span>
+          <span>⚙️ Direct Local IP Fallback (Optional)</span>
           <span class="toggle-arrow">▾</span>
         </summary>
         <div class="config-body">
           <div class="input-group">
-            <label for="serverHost">Laptop IP / WebSocket Address:</label>
+            <label for="serverHost">Direct Laptop IP:Port (if on same Wi-Fi):</label>
             <div class="input-with-button">
-              <input type="text" id="serverHost" placeholder="e.g. 192.168.1.5:8000" autocomplete="off" spellcheck="false">
-              <button id="saveConnectBtn" class="btn-secondary">Connect</button>
+              <input type="text" id="serverHost" placeholder="e.g. 192.168.1.5:8000" autocomplete="off">
+              <button id="directConnectBtn" class="btn-secondary">Connect Local</button>
             </div>
-            <p class="input-help">Tip: Your laptop terminal displays the exact IP after running <code>python main.py</code>.</p>
           </div>
           <div class="toggle-row">
-            <label for="autoReconnect">Auto-reconnect if Wi-Fi drops</label>
+            <label for="autoReconnect">Auto-reconnect</label>
             <input type="checkbox" id="autoReconnect" checked>
           </div>
         </div>
       </details>
     </div>
 
+    <!-- TAB 2: LAPTOP HOST (For PC Users) -->
     <div id="tabHost" class="tab-content">
       <section class="host-section glass-panel">
         <div class="section-title">
           <h2>💻 Host Movie Audio from Your Laptop</h2>
-          <p class="section-desc">Run this lightweight Python script on your laptop to capture movie sound and stream to your phones.</p>
+          <p class="section-desc">Broadcast your laptop's movie audio to any smartphone in the room over the cloud (4G/5G/any network).</p>
         </div>
 
-        <div class="steps-container">
-          <div class="step-card">
-            <div class="step-num">1</div>
-            <div class="step-info">
-              <h4>Download Python Files</h4>
-              <p>Save <code>main.py</code> and <code>requirements.txt</code> to any folder.</p>
-            </div>
+        <!-- Cloud Room Broadcaster Card -->
+        <div class="broadcast-card">
+          <div class="broadcast-header">
+            <span class="broadcast-badge">⚡ CLOUD HOST</span>
+            <span id="hostRoomBadge" class="host-code">THEATRE-7788</span>
           </div>
-          <div class="step-card">
-            <div class="step-num">2</div>
-            <div class="step-info">
-              <h4>Run on Laptop</h4>
-              <p>Open command prompt / PowerShell and run the 1-liner command below.</p>
-            </div>
-          </div>
-          <div class="step-card">
-            <div class="step-num">3</div>
-            <div class="step-info">
-              <h4>Scan QR Code on Mobiles</h4>
-              <p>Scan the terminal QR code with all your phones & hit <strong>"Listen"</strong>!</p>
+          <p class="broadcast-desc">Click below to share audio from your movie video player, browser tab, or entire laptop.</p>
+          <button id="startScreenAudioBtn" class="btn-host-action">
+            <span>🖥️ Share Movie Audio to Cloud</span>
+          </button>
+          <div id="hostLiveInfo" class="host-live-info" style="display:none;">
+            <p>🟢 <strong>Broadcasting Live!</strong> Mobile phones can now listen.</p>
+            <div class="share-box">
+              <span id="shareUrlText">https://audio-theatre.vercel.app/?room=...</span>
+              <button id="copyShareUrlBtn" class="copy-btn">📋 Copy Link</button>
             </div>
           </div>
         </div>
+
+        <!-- Download Python Capture Files -->
+        <div class="section-divider">
+          <span>OR USE PYTHON SCRIPT</span>
+        </div>
+
+        <p class="section-desc">If you prefer running Python on your laptop to capture WASAPI system audio directly:</p>
 
         <div class="download-grid">
           <a href="main.py" download="main.py" class="btn-download primary">
             <span class="dl-icon">📥</span>
             <div>
               <strong>Download main.py</strong>
-              <small>Capture & Stream Server (1.5 KB)</small>
+              <small>Cloud & Local Audio Sender</small>
             </div>
           </a>
           <a href="requirements.txt" download="requirements.txt" class="btn-download">
@@ -192,73 +215,18 @@
 
         <div class="code-box">
           <div class="code-header">
-            <span>⚡ Quick 1-Liner Command (Terminal)</span>
+            <span>⚡ Quick Terminal 1-Liner</span>
             <button class="copy-btn" id="copyCmdBtn" onclick="copyCommand()">📋 Copy</button>
           </div>
           <pre><code id="terminalCmd">pip install soundcard websockets qrcode numpy && python main.py</code></pre>
         </div>
-
-        <div class="code-box">
-          <div class="code-header">
-            <span>📄 main.py Source Code</span>
-            <button class="copy-btn" id="copyCodeBtn" onclick="copySourceCode()">📋 Copy Code</button>
-          </div>
-          <pre class="scrollable-code"><code id="pythonSourceCode"># Audio Theatre - main.py
-import asyncio, json, socket, threading, time
-import numpy as np, qrcode, soundcard as sc, websockets
-
-PORT = 8000
-SAMPLE_RATE = 48000
-BLOCK_SIZE = 1024
-connected_clients = set()
-clients_lock = threading.Lock()
-
-def get_local_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(('8.8.8.8', 80))
-        return s.getsockname()[0]
-    except Exception: return '127.0.0.1'
-    finally: s.close()
-
-async def ws_handler(websocket):
-    with clients_lock: connected_clients.add(websocket)
-    await websocket.send(json.dumps({"type": "config", "sample_rate": SAMPLE_RATE, "channels": 2}))
-    try: await websocket.wait_closed()
-    finally:
-        with clients_lock: connected_clients.discard(websocket)
-
-def audio_capture_loop(loop):
-    speaker = sc.default_speaker()
-    mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
-    with mic.recorder(samplerate=SAMPLE_RATE, channels=2, blocksize=BLOCK_SIZE) as rec:
-        while True:
-            data = rec.record(numframes=BLOCK_SIZE)
-            with clients_lock:
-                if not connected_clients: time.sleep(0.01); continue
-                clients = list(connected_clients)
-            raw_bytes = (np.clip(data, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
-            for client in clients:
-                try: asyncio.run_coroutine_threadsafe(client.send(raw_bytes), loop)
-                except Exception: pass
-
-async def main():
-    ip = get_local_ip()
-    print(f"🎬 AUDIO THEATRE: http://{ip}:{PORT}")
-    qr = qrcode.QRCode(border=1); qr.add_data(f"http://{ip}:{PORT}"); qr.make(fit=True); qr.print_ascii(invert=True)
-    threading.Thread(target=audio_capture_loop, args=(asyncio.get_running_loop(),), daemon=True).start()
-    async with websockets.serve(ws_handler, "0.0.0.0", PORT):
-        await asyncio.Future()
-
-if __name__ == "__main__":
-    asyncio.run(main())</code></pre>
-        </div>
       </section>
     </div>
 
+    <!-- Footer -->
     <footer class="app-footer">
-      <p>🎬 Place your phones around the room for synchronized cinema sound.</p>
-      <p class="copyright">Audio Theatre • Ultra Low-Latency Streamer</p>
+      <p>🎬 Pure Cloud Audio Theatre • Zero Network Restrictions</p>
+      <p class="copyright">Works seamlessly on 4G, 5G, and any Wi-Fi network.</p>
     </footer>
   </main>
 
