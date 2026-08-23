@@ -1,6 +1,6 @@
 /**
- * Audio Theatre - Pure Cloud & Local WebRTC Receiver
- * Global Room Streaming over WebRTC & Web Audio API
+ * Audio Theatre - Ultra Low-Latency Multi-Device Cinema Audio
+ * Dual WebRTC Cloud Streamer & Local WebSocket Player
  */
 
 // State
@@ -22,6 +22,7 @@ let hostMediaStream = null;
 let hostPeer = null;
 
 // DOM Elements
+const remoteAudio = document.getElementById('remoteAudio');
 const toggleBtn = document.getElementById('toggleBtn');
 const btnIcon = document.getElementById('btnIcon');
 const btnText = document.getElementById('btnText');
@@ -40,7 +41,6 @@ const roomCodeInput = document.getElementById('roomCodeInput');
 const joinRoomBtn = document.getElementById('joinRoomBtn');
 const serverHostInput = document.getElementById('serverHost');
 const directConnectBtn = document.getElementById('directConnectBtn');
-const autoReconnectCheck = document.getElementById('autoReconnect');
 const visualizerCanvas = document.getElementById('visualizerCanvas');
 const audioWavePulse = document.getElementById('audioWavePulse');
 const channelLabel = document.getElementById('channelLabel');
@@ -57,6 +57,7 @@ const startScreenAudioBtn = document.getElementById('startScreenAudioBtn');
 const hostLiveInfo = document.getElementById('hostLiveInfo');
 const shareUrlText = document.getElementById('shareUrlText');
 const copyShareUrlBtn = document.getElementById('copyShareUrlBtn');
+const hostQrCodeDiv = document.getElementById('hostQrCode');
 
 function switchTab(tab) {
   if (tab === 'mobile') {
@@ -85,10 +86,15 @@ function generateRoomId() {
   return `THEATRE-${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
-// Auto-switch to Laptop Host tab if user is on Desktop PC without ?room
+// Auto-switch to Laptop Host tab on desktop if no ?room is in URL
 const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 if (!isMobileDevice && !urlParams.has('room') && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
   switchTab('host');
+}
+
+// Auto-populate local host input
+if (window.location.hostname && window.location.hostname !== 'localhost') {
+  serverHostInput.value = `${window.location.hostname}:8000`;
 }
 
 function updateStatus(state, message) {
@@ -150,7 +156,7 @@ function releaseWakeLock() {
 // ============================================================================
 function connectCloudRoom(roomId) {
   initAudioContext();
-  const cleanRoom = roomId.trim().toUpperCase();
+  const cleanRoom = (roomId || roomCodeInput.value).trim().toUpperCase();
   localStorage.setItem('theatre_room', cleanRoom);
 
   updateStatus('connecting', 'Connecting...');
@@ -160,7 +166,6 @@ function connectCloudRoom(roomId) {
     peer.destroy();
   }
 
-  // Create client peer
   peer = new Peer({
     debug: 1,
     config: {
@@ -175,10 +180,9 @@ function connectCloudRoom(roomId) {
   const hostPeerId = `at-room-${cleanRoom.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`;
 
   peer.on('open', (id) => {
-    // Call the host peer to receive audio stream
-    // Create an empty dummy audio track to initiate WebRTC MediaStream call
-    const silentAudio = createSilentStream();
-    const call = peer.call(hostPeerId, silentAudio);
+    // Initiate call to host with dummy audio stream
+    const dummyStream = createSilentStream();
+    const call = peer.call(hostPeerId, dummyStream);
     currentCall = call;
 
     call.on('stream', (remoteStream) => {
@@ -190,21 +194,12 @@ function connectCloudRoom(roomId) {
       tryLocalFallback(cleanRoom);
     });
 
-    // Also listen for binary DataChannel packets (from Python cloud bridge)
-    const conn = peer.connect(hostPeerId);
-    conn.on('data', (data) => {
-      if (data instanceof ArrayBuffer) {
-        processAudioChunk(data);
-      }
-    });
-
-    // Timeout check
+    // Timeout: if no stream received in 3.5s, attempt local connection
     setTimeout(() => {
       if (!isPlaying) {
-        // Try local connection if peer is not reachable
         tryLocalFallback(cleanRoom);
       }
-    }, 4000);
+    }, 3500);
   });
 
   peer.on('error', (err) => {
@@ -224,56 +219,43 @@ function createSilentStream() {
 
 function onAudioStreamReceived(stream) {
   isPlaying = true;
-  updateStatus('connected', 'Cloud Live');
-  statusSubtext.textContent = `Connected to Cloud Room: ${roomCodeInput.value}`;
-  cloudStatusVal.textContent = 'Cloud ⚡';
+  updateStatus('connected', 'Live Sound');
+  statusSubtext.textContent = `Receiving movie audio from Room: ${roomCodeInput.value}`;
+  cloudStatusVal.textContent = 'WebRTC ⚡';
   btnText.textContent = 'STOP LISTENING';
   btnIcon.textContent = '⏹';
   toggleBtn.classList.add('playing');
   requestWakeLock();
 
-  const sourceNode = audioCtx.createMediaStreamSource(stream);
-  
-  // Stereo channel splitter & panner for surround placement
-  const splitter = audioCtx.createChannelSplitter(2);
-  const merger = audioCtx.createChannelMerger(2);
+  // 1. Play through native HTML5 Audio element (foolproof on iOS & Android)
+  if (remoteAudio) {
+    remoteAudio.srcObject = stream;
+    remoteAudio.volume = 1.0;
+    remoteAudio.play().catch(e => console.log('Audio play catch:', e));
+  }
 
-  sourceNode.connect(splitter);
-
-  updateChannelRouting(splitter, merger);
-
-  merger.connect(gainNode);
-}
-
-function updateChannelRouting(splitter, merger) {
+  // 2. Also pipe into Web Audio API for volume boost (>100%) and visualizer
   try {
-    splitter.disconnect();
-    if (speakerMode === 'left') {
-      splitter.connect(merger, 0, 0);
-      splitter.connect(merger, 0, 1);
-    } else if (speakerMode === 'right') {
-      splitter.connect(merger, 1, 0);
-      splitter.connect(merger, 1, 1);
-    } else {
-      splitter.connect(merger, 0, 0);
-      splitter.connect(merger, 1, 1);
-    }
-  } catch (e) {}
+    initAudioContext();
+    const sourceNode = audioCtx.createMediaStreamSource(stream);
+    sourceNode.connect(gainNode);
+  } catch (e) {
+    console.warn('Web Audio pipe:', e);
+  }
 }
 
 function tryLocalFallback(roomId) {
-  // If local host input specified or default local port
   const host = serverHostInput.value.trim() || `${window.location.hostname}:8000`;
   if (host && host !== ':8000') {
     connectLocalWebSocket(host);
   } else {
     updateStatus('disconnected', 'Waiting for Host');
-    statusSubtext.textContent = `Host not live yet for room ${roomId}. Make sure laptop is broadcasting.`;
+    statusSubtext.textContent = `No broadcaster found for Room ${roomId}. Start broadcasting on your laptop first!`;
   }
 }
 
 // ============================================================================
-// 2. LOCAL WEBSOCKET ENGINE (For Local Wi-Fi or Direct Python connection)
+// 2. LOCAL WEBSOCKET ENGINE (For Python Server)
 // ============================================================================
 function connectLocalWebSocket(host) {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -290,7 +272,7 @@ function connectLocalWebSocket(host) {
     ws.onopen = () => {
       isPlaying = true;
       updateStatus('connected', 'Local Live');
-      statusSubtext.textContent = 'Streaming via Local Wi-Fi';
+      statusSubtext.textContent = 'Streaming movie sound from laptop';
       cloudStatusVal.textContent = 'Local 🏠';
       btnText.textContent = 'STOP LISTENING';
       btnIcon.textContent = '⏹';
@@ -308,7 +290,7 @@ function connectLocalWebSocket(host) {
 
     ws.onerror = () => {
       updateStatus('disconnected', 'Offline');
-      statusSubtext.textContent = 'Cannot reach laptop. Check room code or start laptop broadcast.';
+      statusSubtext.textContent = 'Make sure laptop is running: python main.py';
     };
 
     ws.onclose = () => {
@@ -369,6 +351,10 @@ function processAudioChunk(arrayBuffer) {
 function stopAudio(userInitiated = true) {
   isPlaying = false;
   
+  if (remoteAudio) {
+    remoteAudio.pause();
+    remoteAudio.srcObject = null;
+  }
   if (currentCall) {
     currentCall.close();
     currentCall = null;
@@ -394,14 +380,14 @@ function stopAudio(userInitiated = true) {
 }
 
 // ============================================================================
-// 3. LAPTOP CLOUD HOST BROADCASTER (Zero-Install Screen/System Audio Sharing)
+// 3. LAPTOP BROWSER AUDIO BROADCASTER (Zero-Install Screen/System Audio Share)
 // ============================================================================
 async function startLaptopBroadcaster() {
   const roomId = roomCodeInput.value.trim().toUpperCase() || generateRoomId();
   const hostPeerId = `at-room-${roomId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}`;
 
   try {
-    // Capture tab / screen / system movie audio
+    // Request screen/tab capture with system audio
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
       audio: {
@@ -413,41 +399,66 @@ async function startLaptopBroadcaster() {
 
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0) {
-      alert("⚠️ No audio detected! Please make sure to check 'Share audio' / 'Share tab audio' in the browser popup.");
+      alert("⚠️ No audio detected! When sharing your screen/tab, make sure to check the 'Share audio' or 'Share tab audio' checkbox.");
       return;
     }
 
     hostMediaStream = stream;
 
-    // Create host WebRTC Peer
+    // Create Host PeerJS
     if (hostPeer) hostPeer.destroy();
     hostPeer = new Peer(hostPeerId, {
       debug: 1,
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
         ]
       }
     });
 
     hostPeer.on('open', () => {
       isHost = true;
-      hostLiveInfo.style.display = 'block';
+      hostLiveInfo.style.display = 'flex';
+      
       const shareUrl = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
       shareUrlText.textContent = shareUrl;
+      
       startScreenAudioBtn.innerHTML = '<span>🟢 Movie Audio Broadcasting Live!</span>';
       startScreenAudioBtn.style.background = 'linear-gradient(135deg, #00ff88 0%, #00aa55 100%)';
+
+      // Generate on-screen QR code
+      if (hostQrCodeDiv) {
+        hostQrCodeDiv.innerHTML = '';
+        if (typeof QRCode !== 'undefined') {
+          new QRCode(hostQrCodeDiv, {
+            text: shareUrl,
+            width: 140,
+            height: 140,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M
+          });
+        }
+      }
     });
 
     hostPeer.on('call', (call) => {
-      // Answer incoming phone calls by sending the laptop movie audio stream
+      // Answer receiver call by sending our laptop movie audio stream
       call.answer(hostMediaStream);
     });
 
-    stream.getVideoTracks().forEach(t => t.stop()); // We only need audio
+    // Handle when user stops screen sharing
+    audioTracks[0].onended = () => {
+      if (hostPeer) hostPeer.destroy();
+      hostLiveInfo.style.display = 'none';
+      startScreenAudioBtn.innerHTML = '<span>🖥️ Click to Share Movie Audio</span>';
+      startScreenAudioBtn.style.background = '';
+    };
+
   } catch (err) {
-    console.error('Host share error:', err);
+    console.error('Screen audio share error:', err);
   }
 }
 
@@ -456,7 +467,7 @@ startScreenAudioBtn.addEventListener('click', startLaptopBroadcaster);
 copyShareUrlBtn.addEventListener('click', () => {
   navigator.clipboard.writeText(shareUrlText.textContent).then(() => {
     copyShareUrlBtn.textContent = '✅ Copied!';
-    setTimeout(() => { copyShareUrlBtn.textContent = '📋 Copy Link'; }, 2000);
+    setTimeout(() => { copyShareUrlBtn.textContent = '📋 Copy'; }, 2000);
   });
 });
 

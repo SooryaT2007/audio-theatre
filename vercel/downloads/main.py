@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
-Audio Theatre - Laptop Audio Sender (Cloud & Local Support)
-Captures laptop movie audio (loopback) and streams it in real-time to mobile phones.
-
-Works across different networks, mobile data (4G/5G), or local Wi-Fi!
+Audio Theatre - Laptop Audio Loopback Streamer
+Captures movie sound from laptop speakers and serves the mobile web player directly over Wi-Fi!
 
 Usage:
     pip install -r requirements.txt
@@ -11,7 +9,10 @@ Usage:
 """
 
 import asyncio
+import http
 import json
+import mimetypes
+import os
 import random
 import socket
 import sys
@@ -31,6 +32,11 @@ connected_clients = set()
 clients_lock = threading.Lock()
 ROOM_ID = f"THEATRE-{random.randint(1000, 9999)}"
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+WEB_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..', 'vercel'))
+if not os.path.exists(WEB_DIR):
+    WEB_DIR = SCRIPT_DIR
+
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -42,7 +48,7 @@ def get_local_ip():
         s.close()
     return ip
 
-def get_loopback_microphone():
+def get_loopback_mic():
     try:
         speaker = sc.default_speaker()
         mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
@@ -55,10 +61,11 @@ def get_loopback_microphone():
 
 async def ws_handler(websocket):
     client_addr = websocket.remote_address
-    print(f"\n[+] 📱 Device Connected: {client_addr[0]}:{client_addr[1]}")
+    print(f"\n[+] 📱 Phone Connected: {client_addr[0]}:{client_addr[1]}")
+    
     with clients_lock:
         connected_clients.add(websocket)
-        print(f"[*] Total active listeners: {len(connected_clients)}")
+        print(f"[*] Total active mobile speakers: {len(connected_clients)}")
 
     init_msg = json.dumps({
         "type": "config",
@@ -67,6 +74,7 @@ async def ws_handler(websocket):
         "channels": CHANNELS,
         "block_size": BLOCK_SIZE
     })
+    
     try:
         await websocket.send(init_msg)
         await websocket.wait_closed()
@@ -75,11 +83,36 @@ async def ws_handler(websocket):
     finally:
         with clients_lock:
             connected_clients.discard(websocket)
-            print(f"\n[-] 📱 Device Disconnected: {client_addr[0]}")
-            print(f"[*] Total active listeners: {len(connected_clients)}")
+            print(f"\n[-] 📱 Phone Disconnected: {client_addr[0]}")
+            print(f"[*] Total active mobile speakers: {len(connected_clients)}")
+
+def process_http_request(connection, request):
+    if request.headers.get("Upgrade", "").lower() == "websocket":
+        return None
+
+    raw_path = request.path.split('?')[0]
+    if raw_path in ('/', ''):
+        raw_path = '/index.html'
+
+    file_path = os.path.join(WEB_DIR, raw_path.lstrip('/'))
+    
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        mime_type, _ = mimetypes.guess_type(file_path)
+        with open(file_path, 'rb') as f:
+            content = f.read()
+        return connection.respond(
+            http.HTTPStatus.OK,
+            content,
+            headers=[
+                ("Content-Type", mime_type or "text/plain"),
+                ("Access-Control-Allow-Origin", "*"),
+                ("Cache-Control", "no-cache")
+            ]
+        )
+    return connection.respond(http.HTTPStatus.NOT_FOUND, b"<h1>404 Not Found</h1>")
 
 def audio_capture_loop(loop):
-    mic, dev_name = get_loopback_microphone()
+    mic, dev_name = get_loopback_mic()
     print(f"[*] Audio Device: {dev_name}")
     print(f"[*] Capturing movie sound at {SAMPLE_RATE} Hz, {CHANNELS} channels...\n")
 
@@ -87,6 +120,7 @@ def audio_capture_loop(loop):
         with mic.recorder(samplerate=SAMPLE_RATE, channels=CHANNELS, blocksize=BLOCK_SIZE) as recorder:
             while True:
                 data = recorder.record(numframes=BLOCK_SIZE)
+                
                 with clients_lock:
                     if not connected_clients:
                         time.sleep(0.01)
@@ -102,45 +136,44 @@ def audio_capture_loop(loop):
                     except Exception:
                         pass
     except Exception as e:
-        print(f"\n[!] Audio capture error: {e}")
+        print(f"\n[!] Audio capture notice: {e}")
 
-def print_banner(local_ip, room_id):
-    cloud_url = f"https://audio-theatre.vercel.app/?room={room_id}"
-    local_url = f"http://{local_ip}:{PORT}"
-
+def print_banner(local_ip):
+    url = f"http://{local_ip}:{PORT}"
     print("=" * 64)
-    print("        🎬 AUDIO THEATRE - LAPTOP AUDIO SENDER (CLOUD) 🎬        ")
+    print("        🎬 AUDIO THEATRE - LAPTOP AUDIO SENDER 🎬        ")
     print("=" * 64)
-    print(f"\n🔑 CLOUD ROOM CODE : {room_id}")
-    print(f"🌐 CLOUD RECEIVER  : {cloud_url}")
-    print(f"🏠 LOCAL WI-FI     : {local_url}")
-    print("\nScan the QR code below on your mobile phones (works on 4G/5G/Wi-Fi):")
+    print(f"\n🌐 Mobile URL : {url}")
+    print(f"🔑 Room Code : {ROOM_ID}")
+    print("\nScan the QR code below on your mobile phones to connect instantly:")
     print("-" * 64)
     
     qr = qrcode.QRCode(border=1)
-    qr.add_data(cloud_url)
+    qr.add_data(url)
     qr.make(fit=True)
     qr.print_ascii(invert=True)
     
     print("-" * 64)
-    print(">>> 1. Play any movie/video on this laptop.")
-    print(f">>> 2. Open {cloud_url} on any phone anywhere.")
-    print(">>> 3. Tap 'LISTEN' and place phones around the room!")
-    print(">>> Press Ctrl+C in this terminal to stop.")
+    print(">>> 1. Play your movie / video on this laptop.")
+    print(">>> 2. Scan the QR code with your mobile phones.")
+    print(">>> 3. Tap 'LISTEN' on each phone & place them around the room!")
+    print(">>> Press Ctrl+C to stop.")
     print("=" * 64 + "\n")
 
 async def main():
     local_ip = get_local_ip()
-    print_banner(local_ip, ROOM_ID)
+    print_banner(local_ip)
+
     loop = asyncio.get_running_loop()
     threading.Thread(target=audio_capture_loop, args=(loop,), daemon=True).start()
-    async with websockets.serve(ws_handler, "0.0.0.0", PORT):
-        print(f"[*] Server listening on port {PORT}. Ready for devices (Cloud & Local)...")
+
+    async with websockets.serve(ws_handler, "0.0.0.0", PORT, process_request=process_http_request):
+        print(f"[*] Server running on port {PORT}. Ready for mobile devices!")
         await asyncio.Future()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n[!] Audio Theatre stopped.")
+        print("\n[!] Stopped.")
         sys.exit(0)
