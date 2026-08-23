@@ -1,0 +1,12 @@
+{
+  "name": "audio-theatre-web",
+  "version": "1.0.0",
+  "description": "Mobile web receiver & laptop script hub for Audio Theatre",
+  "main": "index.html",
+  "scripts": {
+    "start": "serve ."
+  },
+  "keywords": ["audio", "streaming", "theatre", "webaudio", "realtime"],
+  "author": "",
+  "license": "MIT"
+}

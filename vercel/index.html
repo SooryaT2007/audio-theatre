@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a0b10">
+  <meta name="description" content="Audio Theatre: Stream laptop movie audio to multiple mobile phones as synchronized surround speakers.">
+  <title>Audio Theatre 🎬 Surround Speaker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="glow-bg"></div>
+
+  <main class="app-container">
+    <header class="app-header">
+      <div class="logo">
+        <span class="logo-icon">🔊</span>
+        <div class="logo-text">
+          <h1>AUDIO THEATRE</h1>
+          <span class="tagline">MULTI-PHONE MOVIE SURROUND SOUND</span>
+        </div>
+      </div>
+      <div id="statusBadgeWrapper">
+        <div id="statusBadge" class="badge disconnected">
+          <span class="indicator-dot"></span>
+          <span id="statusText">Ready</span>
+        </div>
+      </div>
+    </header>
+
+    <nav class="nav-tabs">
+      <button class="nav-tab active" id="tabMobileBtn" data-target="tabMobile">
+        <span>📱 Mobile Speaker</span>
+      </button>
+      <button class="nav-tab" id="tabHostBtn" data-target="tabHost">
+        <span>💻 Laptop Host (Files)</span>
+      </button>
+    </nav>
+
+    <div id="tabMobile" class="tab-content active">
+      <section class="player-card glass-panel">
+        <div class="visualizer-wrapper">
+          <canvas id="visualizerCanvas"></canvas>
+          <div id="audioWavePulse" class="pulse-ring"></div>
+        </div>
+
+        <div class="action-section">
+          <button id="toggleBtn" class="btn-primary" aria-label="Start Audio">
+            <span class="btn-icon" id="btnIcon">▶</span>
+            <span id="btnText">TAP TO LISTEN</span>
+          </button>
+          <p class="hint-text" id="statusSubtext">Turn this phone into an auxiliary movie speaker</p>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <span class="stat-label">LATENCY</span>
+            <span class="stat-val" id="latencyVal">~15 ms</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">SAMPLE RATE</span>
+            <span class="stat-val" id="sampleRateVal">48 kHz</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">WAKE LOCK</span>
+            <span class="stat-val active-text" id="wakeLockVal">Active 🛡️</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="controls-section glass-panel">
+        <div class="control-group">
+          <div class="control-header">
+            <label for="volumeSlider">🔊 Volume Boost</label>
+            <span class="control-value" id="volumeVal">100%</span>
+          </div>
+          <input type="range" id="volumeSlider" min="0" max="300" value="100" step="5" class="custom-slider">
+          <div class="slider-ticks">
+            <button class="preset-pill" onclick="setVolume(100)">100% (Normal)</button>
+            <button class="preset-pill" onclick="setVolume(180)">180% (Loud)</button>
+            <button class="preset-pill highlight" onclick="setVolume(250)">250% (Max Boost)</button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <label>🎧 Speaker Role / Placement</label>
+            <span class="control-sublabel" id="channelLabel">Stereo (Both)</span>
+          </div>
+          <div class="channel-selector">
+            <button class="channel-btn active" data-channel="stereo" id="chanStereo">
+              <span>🎭 Stereo</span>
+              <small>Center / Standard</small>
+            </button>
+            <button class="channel-btn" data-channel="left" id="chanLeft">
+              <span>👈 Left</span>
+              <small>Left Speaker</small>
+            </button>
+            <button class="channel-btn" data-channel="right" id="chanRight">
+              <span>👉 Right</span>
+              <small>Right Speaker</small>
+            </button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <div class="control-header">
+            <label for="syncSlider">⏱️ Video Audio Sync (Offset)</label>
+            <span class="control-value" id="syncVal">0 ms</span>
+          </div>
+          <input type="range" id="syncSlider" min="-200" max="200" value="0" step="10" class="custom-slider">
+          <div class="sync-hints">
+            <span>⏮️ Faster</span>
+            <button class="reset-link" id="resetSyncBtn">Reset (0 ms)</button>
+            <span>Slower ⏭️</span>
+          </div>
+        </div>
+      </section>
+
+      <details class="config-details glass-panel" id="configDetails">
+        <summary class="config-summary">
+          <span>⚙️ Laptop Connection Settings</span>
+          <span class="toggle-arrow">▾</span>
+        </summary>
+        <div class="config-body">
+          <div class="input-group">
+            <label for="serverHost">Laptop IP / WebSocket Address:</label>
+            <div class="input-with-button">
+              <input type="text" id="serverHost" placeholder="e.g. 192.168.1.5:8000" autocomplete="off" spellcheck="false">
+              <button id="saveConnectBtn" class="btn-secondary">Connect</button>
+            </div>
+            <p class="input-help">Tip: Your laptop terminal displays the exact IP after running <code>python main.py</code>.</p>
+          </div>
+          <div class="toggle-row">
+            <label for="autoReconnect">Auto-reconnect if Wi-Fi drops</label>
+            <input type="checkbox" id="autoReconnect" checked>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <div id="tabHost" class="tab-content">
+      <section class="host-section glass-panel">
+        <div class="section-title">
+          <h2>💻 Host Movie Audio from Your Laptop</h2>
+          <p class="section-desc">Run this lightweight Python script on your laptop to capture movie sound and stream to your phones.</p>
+        </div>
+
+        <div class="steps-container">
+          <div class="step-card">
+            <div class="step-num">1</div>
+            <div class="step-info">
+              <h4>Download Python Files</h4>
+              <p>Save <code>main.py</code> and <code>requirements.txt</code> to any folder.</p>
+            </div>
+          </div>
+          <div class="step-card">
+            <div class="step-num">2</div>
+            <div class="step-info">
+              <h4>Run on Laptop</h4>
+              <p>Open command prompt / PowerShell and run the 1-liner command below.</p>
+            </div>
+          </div>
+          <div class="step-card">
+            <div class="step-num">3</div>
+            <div class="step-info">
+              <h4>Scan QR Code on Mobiles</h4>
+              <p>Scan the terminal QR code with all your phones & hit <strong>"Listen"</strong>!</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="download-grid">
+          <a href="main.py" download="main.py" class="btn-download primary">
+            <span class="dl-icon">📥</span>
+            <div>
+              <strong>Download main.py</strong>
+              <small>Capture & Stream Server (1.5 KB)</small>
+            </div>
+          </a>
+          <a href="requirements.txt" download="requirements.txt" class="btn-download">
+            <span class="dl-icon">📄</span>
+            <div>
+              <strong>Download requirements.txt</strong>
+              <small>soundcard, websockets, qrcode</small>
+            </div>
+          </a>
+        </div>
+
+        <div class="code-box">
+          <div class="code-header">
+            <span>⚡ Quick 1-Liner Command (Terminal)</span>
+            <button class="copy-btn" id="copyCmdBtn" onclick="copyCommand()">📋 Copy</button>
+          </div>
+          <pre><code id="terminalCmd">pip install soundcard websockets qrcode numpy && python main.py</code></pre>
+        </div>
+
+        <div class="code-box">
+          <div class="code-header">
+            <span>📄 main.py Source Code</span>
+            <button class="copy-btn" id="copyCodeBtn" onclick="copySourceCode()">📋 Copy Code</button>
+          </div>
+          <pre class="scrollable-code"><code id="pythonSourceCode"># Audio Theatre - main.py
+import asyncio, json, socket, threading, time
+import numpy as np, qrcode, soundcard as sc, websockets
+
+PORT = 8000
+SAMPLE_RATE = 48000
+BLOCK_SIZE = 1024
+connected_clients = set()
+clients_lock = threading.Lock()
+
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('8.8.8.8', 80))
+        return s.getsockname()[0]
+    except Exception: return '127.0.0.1'
+    finally: s.close()
+
+async def ws_handler(websocket):
+    with clients_lock: connected_clients.add(websocket)
+    await websocket.send(json.dumps({"type": "config", "sample_rate": SAMPLE_RATE, "channels": 2}))
+    try: await websocket.wait_closed()
+    finally:
+        with clients_lock: connected_clients.discard(websocket)
+
+def audio_capture_loop(loop):
+    speaker = sc.default_speaker()
+    mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
+    with mic.recorder(samplerate=SAMPLE_RATE, channels=2, blocksize=BLOCK_SIZE) as rec:
+        while True:
+            data = rec.record(numframes=BLOCK_SIZE)
+            with clients_lock:
+                if not connected_clients: time.sleep(0.01); continue
+                clients = list(connected_clients)
+            raw_bytes = (np.clip(data, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+            for client in clients:
+                try: asyncio.run_coroutine_threadsafe(client.send(raw_bytes), loop)
+                except Exception: pass
+
+async def main():
+    ip = get_local_ip()
+    print(f"🎬 AUDIO THEATRE: http://{ip}:{PORT}")
+    qr = qrcode.QRCode(border=1); qr.add_data(f"http://{ip}:{PORT}"); qr.make(fit=True); qr.print_ascii(invert=True)
+    threading.Thread(target=audio_capture_loop, args=(asyncio.get_running_loop(),), daemon=True).start()
+    async with websockets.serve(ws_handler, "0.0.0.0", PORT):
+        await asyncio.Future()
+
+if __name__ == "__main__":
+    asyncio.run(main())</code></pre>
+        </div>
+      </section>
+    </div>
+
+    <footer class="app-footer">
+      <p>🎬 Place your phones around the room for synchronized cinema sound.</p>
+      <p class="copyright">Audio Theatre • Ultra Low-Latency Streamer</p>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
