@@ -26,7 +26,7 @@ import websockets
 HTTP_PORT = 8000
 WS_PORT = 8765
 SAMPLE_RATE = 48000
-BLOCK_SIZE = 1024
+BLOCK_SIZE = 512  # ~10.6ms ultra-low latency audio chunks
 CHANNELS = 2
 
 connected_clients = set()
@@ -104,7 +104,7 @@ def audio_capture_loop(loop):
                 data = recorder.record(numframes=BLOCK_SIZE)
                 with clients_lock:
                     if not connected_clients:
-                        time.sleep(0.01)
+                        time.sleep(0.005)
                         continue
                     clients = list(connected_clients)
 
@@ -147,7 +147,7 @@ async def main():
     loop = asyncio.get_running_loop()
     threading.Thread(target=audio_capture_loop, args=(loop,), daemon=True).start()
 
-    async with websockets.serve(ws_handler, "0.0.0.0", WS_PORT):
+    async with websockets.serve(ws_handler, "0.0.0.0", WS_PORT, ping_interval=None):
         print(f"[*] Web Server on port {HTTP_PORT} | Audio Stream on port {WS_PORT}")
         print("[*] Ready for mobile devices!")
         await asyncio.Future()

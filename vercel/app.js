@@ -351,15 +351,15 @@ function processAudioChunk(arrayBuffer) {
 
   const currentTime = audioCtx.currentTime;
   const offset = syncOffsetMs / 1000.0;
-  const targetStartTime = currentTime + 0.025 + offset;
+  const targetStartTime = currentTime + 0.008 + offset;
 
-  if (nextPlayTime < currentTime || nextPlayTime > currentTime + 0.2) {
-    nextPlayTime = targetStartTime;
+  if (nextPlayTime < currentTime || nextPlayTime > currentTime + 0.08 + offset) {
+    nextPlayTime = Math.max(currentTime + 0.005, targetStartTime);
   }
 
   source.start(nextPlayTime);
   nextPlayTime += audioBuffer.duration;
-  latencyVal.textContent = `~${Math.max(10, Math.round((nextPlayTime - currentTime) * 1000))} ms`;
+  latencyVal.textContent = `~${Math.max(5, Math.round((nextPlayTime - currentTime) * 1000))} ms`;
 }
 
 function stopAudio(userInitiated = true) {

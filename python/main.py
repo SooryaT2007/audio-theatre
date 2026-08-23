@@ -26,7 +26,7 @@ import websockets
 HTTP_PORT = 8000
 WS_PORT = 8765
 SAMPLE_RATE = 48000
-BLOCK_SIZE = 1024  # ~21ms low-latency audio chunk
+BLOCK_SIZE = 512  # ~10.6ms ultra-low latency audio chunks
 CHANNELS = 2
 
 connected_clients = set()
